@@ -208,6 +208,29 @@ class GeoQuizCog(commands.GroupCog, name="geo"):
                 summary += f"{rank}. {player.mention} — **{score} pt(s)**\n"
         await interaction.channel.send(summary)
 
+    @app_commands.command(name="list", description="Inspect all currently loaded countries in memory.")
+    async def list_loaded_countries(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        total_count = len(self.countries)
+        if total_count == 0:
+            await interaction.followup.send("❌ No countries currently loaded in memory!")
+            return
+
+        # Format first 30 country names to inspect starting letters
+        sample_names = [c["name"] for c in self.countries[:30]]
+        names_text = ", ".join(sample_names)
+        
+        # Log all country names directly to your console terminal to inspect everything
+        print(f"📋 ALL LOADED COUNTRIES ({total_count}): {[c['name'] for c in self.countries]}")
+
+        embed = discord.Embed(
+            title="🌍 Loaded Geography Dataset Inspection",
+            description=f"**Total Loaded:** `{total_count}` countries\n\n**First 30 Countries in List:**\n{names_text}...",
+            color=discord.Color.blue()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
 
 async def setup(bot):
     await bot.add_cog(GeoQuizCog(bot))

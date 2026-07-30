@@ -5,15 +5,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Setup Logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("GeoAPI")
 
-# Load Token safely
+# Load Token safely from .env
 GEO_TOKEN = os.getenv("GEO_API_TOKEN", "").strip('"\'')
 BASE_URL = "https://api.restcountries.com/countries/v5"
 
-# Ensure Authorization header has the 'Bearer ' prefix
 if GEO_TOKEN and not GEO_TOKEN.startswith("Bearer "):
     AUTH_HEADER = f"Bearer {GEO_TOKEN}"
 else:
@@ -38,46 +36,47 @@ FALLBACK_COUNTRIES = [
 ]
 
 async def fetch_all_countries():
-    """Loops through all pages of REST Countries v5 to return all ~250 countries."""
-    logger.info("📡 [GeoAPI] Fetching full country list across pages...")
+    """Loops through all countries using limit & offset pagination in v5."""
+    logger.info("📡 [GeoAPI] Fetching full country database from v5 API...")
     
     if not GEO_TOKEN:
         logger.error("❌ [GeoAPI] GEO_API_TOKEN not found in .env! Using fallback.")
         return FALLBACK_COUNTRIES
 
     all_raw_data = []
-    page = 1
+    limit = 50
+    offset = 0
 
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15), headers=HEADERS) as session:
             while True:
-                # Fixed variable name to BASE_URL
-                url = f"{BASE_URL}?page={page}"
+                url = f"{BASE_URL}?limit={limit}&offset={offset}"
                 async with session.get(url) as resp:
                     if resp.status != 200:
-                        logger.warning(f"⚠️ [GeoAPI] HTTP {resp.status} on page {page}. Stopping pagination.")
+                        logger.warning(f"⚠️ [GeoAPI] Status {resp.status} at offset {offset}. Stopping.")
                         break
 
                     res_json = await resp.json()
                     
                     page_data = []
                     if isinstance(res_json, dict):
-                        page_data = res_json.get("data", {}).get("objects", []) or res_json.get("data", [])
+                        page_data = res_json.get("data", {}).get("objects", []) or res_json.get("data", []) or res_json.get("results", [])
                     elif isinstance(res_json, list):
                         page_data = res_json
 
-                    if not page_data or not isinstance(page_data, list):
-                        break
+                    if not isinstance(page_data, list) or len(page_data) == 0:
+                        break  # Reached the end of dataset
 
                     all_raw_data.extend(page_data)
-                    logger.info(f"📥 [GeoAPI] Page {page} loaded ({len(page_data)} countries). Total: {len(all_raw_data)}")
-                    page += 1
+                    logger.info(f"📥 [GeoAPI] Fetched offset {offset} ({len(page_data)} items)... Total: {len(all_raw_data)}")
+                    
+                    # Advance offset for next page
+                    offset += limit
 
-                # Safety check to avoid infinite loop
-                if page > 15:
+                # Safety guard
+                if offset > 350:
                     break
 
-        # Map raw data to our game structure
         valid_countries = []
         for country in all_raw_data:
             if not isinstance(country, dict):
@@ -99,8 +98,8 @@ async def fetch_all_countries():
             if name and capital and flag:
                 valid_countries.append({"name": name, "capital": capital, "flag": flag})
 
-        if len(valid_countries) > 10:
-            logger.info(f"✅ [GeoAPI] Successfully parsed {len(valid_countries)} countries across {page - 1} page(s)!")
+        if len(valid_countries) > 50:
+            logger.info(f"✅ [GeoAPI] Successfully loaded ALL {len(valid_countries)} countries into memory!")
             return valid_countries
         else:
             logger.warning(f"⚠️ [GeoAPI] Parsed only {len(valid_countries)} countries. Using fallback.")
