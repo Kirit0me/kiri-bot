@@ -96,7 +96,7 @@ async def on_message(message: discord.Message):
         # 👇 YOUR CUSTOM FUNNY EMBED & TAGS HERE 👇
         embed = discord.Embed(
             title="👀 You called for Kiri?",
-            description=f"Who summoned me?! Was it you, {message.author.mention}?",
+            description=f"Here is an auto generated message from the author of this bot. I am prolly playing games or reading books so leave me alone, {message.author.mention} eh?",
             color=discord.Color.magenta()
         )
         embed.set_thumbnail(url=message.author.display_avatar.url)
