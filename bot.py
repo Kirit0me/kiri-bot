@@ -5,6 +5,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
+import kafka_producer
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -52,6 +53,16 @@ def build_help_embed() -> discord.Embed:
         inline=False
     )
     embed.add_field(
+        name="📊 Analytics Commands (`/analytics`)",
+        value=(
+            "• `/analytics ingest` — Bulk stream channel history to Kafka\n"
+            "• `/analytics topics` — View top server discussion topics\n"
+            "• `/analytics activity` — View peak activity heatmap\n"
+            "• `/analytics leaderboard` — View top server chatters"
+        ),
+        inline=False
+    )
+    embed.add_field(
         name="ℹ️ Info & Utility",
         value="• `/help` or `kirihelp` — Shows this menu\n• `!sync` — Syncs slash commands (Owner only)",
         inline=False
@@ -75,13 +86,31 @@ async def on_ready():
 
 
 # -------------------------------------------------------------
-# 1. Custom 'kiri' Message Trigger (Add your funny response here!)
+# 1. Real-time Kafka Streaming & Custom 'kiri' Message Trigger
 # -------------------------------------------------------------
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
+    # A. REAL-TIME KAFKA STREAMING
+    # Automatically stream every live server message to the PySpark analytics pipeline
+    if message.guild and message.content:
+        try:
+            kafka_producer.send_message_to_kafka(
+                guild_id=str(message.guild.id),
+                channel_id=str(message.channel.id),
+                message_id=str(message.id),
+                author_id=str(message.author.id),
+                author_name=str(message.author.display_name),
+                content=message.content,
+                timestamp=message.created_at.isoformat()
+            )
+            kafka_producer.flush_kafka()
+        except Exception as e:
+            logger.error(f"❌ Real-time Kafka streaming failed: {e}")
+
+    # B. CUSTOM TRIGGER
     content_lower = message.content.strip().lower()
 
     # Match exact 'kiri' or messages starting with 'kiri ' (excluding 'kirihelp')
@@ -94,7 +123,6 @@ async def on_message(message: discord.Message):
     if is_kiri_trigger:
         logger.info(f"💬 [Kiri Trigger] {message.author} in #{message.channel}: '{message.content}'")
 
-        # 👇 YOUR CUSTOM FUNNY EMBED & TAGS HERE 👇
         embed = discord.Embed(
             title="👀 You called for Kiri?",
             description=f"Here is an auto generated message from the author of this bot. I am prolly playing games or reading books so leave me alone, {message.author.mention} eh?",

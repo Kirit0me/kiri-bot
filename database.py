@@ -1,6 +1,6 @@
 import os
 import logging
-from pymongo import MongoClient, UpdateOne, ASCENDING
+from pymongo import MongoClient, UpdateOne, ASCENDING, DESCENDING
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,30 +9,32 @@ MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 DB_NAME = os.getenv("MONGO_DB_NAME", "kiri_bot_db")
 
 logger = logging.getLogger("Database")
-_topics_col = None
-_activity_col = None
+_db = None
 
-def get_collections():
-    global _topics_col, _activity_col
-    if _topics_col is None:
+def get_db():
+    global _db
+    if _db is None:
         client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-        db = client[DB_NAME]
-        _topics_col = db["server_topics"]
-        _activity_col = db["server_activity"]
+        _db = client[DB_NAME]
         
-        _topics_col.create_index([("guild_id", ASCENDING), ("word", ASCENDING)], unique=True)
-        _activity_col.create_index([("guild_id", ASCENDING), ("hour", ASCENDING)], unique=True)
-    return _topics_col, _activity_col
+        # Indexes for fast aggregations
+        _db["server_topics"].create_index([("guild_id", ASCENDING), ("word", ASCENDING)], unique=True)
+        _db["server_topics"].create_index([("guild_id", ASCENDING), ("count", DESCENDING)])
+        
+        _db["server_activity"].create_index([("guild_id", ASCENDING), ("day_hour", ASCENDING)], unique=True)
+        _db["server_activity"].create_index([("guild_id", ASCENDING), ("count", DESCENDING)])
+        
+        _db["user_analytics"].create_index([("guild_id", ASCENDING), ("user_id", ASCENDING)], unique=True)
+        _db["user_analytics"].create_index([("guild_id", ASCENDING), ("message_count", DESCENDING)])
+        
+    return _db
 
-def upsert_analytics(guild_id: str, word_counts: dict, hour_counts: dict):
-    if not word_counts and not hour_counts:
-        return
+def bulk_upsert_pipeline_data(guild_id: str, word_counts: dict, activity_counts: dict, user_stats: dict):
+    db = get_db()
 
-    topics_col, activity_col = get_collections()
-    
-    # Batch update word counts
+    # 1. Topic Keyword Upserts
     if word_counts:
-        topic_ops = [
+        ops = [
             UpdateOne(
                 {"guild_id": str(guild_id), "word": word},
                 {"$inc": {"count": count}},
@@ -40,20 +42,47 @@ def upsert_analytics(guild_id: str, word_counts: dict, hour_counts: dict):
             )
             for word, count in word_counts.items()
         ]
-        topics_col.bulk_write(topic_ops)
+        db["server_topics"].bulk_write(ops)
 
-    # Batch update hourly message distribution
-    if hour_counts:
-        activity_ops = [
+    # 2. Activity Heatmap Upserts (e.g. "Monday 14:00")
+    if activity_counts:
+        ops = [
             UpdateOne(
-                {"guild_id": str(guild_id), "hour": hour},
+                {"guild_id": str(guild_id), "day_hour": key},
                 {"$inc": {"count": count}},
                 upsert=True
             )
-            for hour, count in hour_counts.items()
+            for key, count in activity_counts.items()
         ]
-        activity_col.bulk_write(activity_ops)
+        db["server_activity"].bulk_write(ops)
 
-def get_peak_activity(guild_id: str):
-    _, activity_col = get_collections()
-    return list(activity_col.find({"guild_id": str(guild_id)}).sort("count", -1))
+    # 3. User Engagement Leaderboard
+    if user_stats:
+        ops = [
+            UpdateOne(
+                {"guild_id": str(guild_id), "user_id": uid},
+                {
+                    "$inc": {
+                        "message_count": stats["messages"],
+                        "total_chars": stats["chars"]
+                    },
+                    "$setOnInsert": {"username": stats["username"]}
+                },
+                upsert=True
+            )
+            for uid, stats in user_stats.items()
+        ]
+        db["user_analytics"].bulk_write(ops)
+
+# Retrieval Functions
+def get_top_topics(guild_id: str, limit: int = 15):
+    db = get_db()
+    return list(db["server_topics"].find({"guild_id": str(guild_id)}).sort("count", -1).limit(limit))
+
+def get_peak_activity(guild_id: str, limit: int = 7):
+    db = get_db()
+    return list(db["server_activity"].find({"guild_id": str(guild_id)}).sort("count", -1).limit(limit))
+
+def get_top_users(guild_id: str, limit: int = 10):
+    db = get_db()
+    return list(db["user_analytics"].find({"guild_id": str(guild_id)}).sort("message_count", -1).limit(limit))

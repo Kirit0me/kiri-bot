@@ -3,10 +3,10 @@ set -e
 
 echo "🚀 Starting Fedora Environment Setup for Kiri-Bot Pipeline..."
 
-# 1. Update system and install required system packages
+# 1. Install required system packages specifically (disabling broken repos if any)
 echo "📦 Installing System Packages (Python 3.12, Java 17, Docker, MongoDB, FFmpeg)..."
-sudo dnf update -y
-sudo dnf install -y python3 python3-pip python3-devel java-17-openjdk-devel docker docker-compose ffmpeg git
+sudo dnf install -y --setopt=strict=0 \
+  python3 python3-pip python3-devel java-17-openjdk-devel docker docker-compose ffmpeg git
 
 # 2. Setup Docker and enable systemd service
 echo "🐳 Configuring Docker..."
