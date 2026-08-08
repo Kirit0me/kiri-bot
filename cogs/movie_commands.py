@@ -50,7 +50,10 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
     # -------------------------------------------------------------
     # 1. /movie scene
     # -------------------------------------------------------------
-    @app_commands.command(name="scene", description="Guess movies from scene pictures across multiple rounds!")
+    # -------------------------------------------------------------
+    # 1. /movie scene (Progressive 5s Clues during 20s Window)
+    # -------------------------------------------------------------
+    @app_commands.command(name="scene", description="Guess movies from 3 scene pictures revealed every 5 seconds!")
     @app_commands.choices(difficulty=[
         app_commands.Choice(name="Easy (Blockbusters)", value="easy"),
         app_commands.Choice(name="Medium (Popular)", value="medium"),
@@ -82,29 +85,71 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
             if not backdrops:
                 continue
 
-            scene = random.choice(backdrops)
-            image_url = f"https://image.tmdb.org/t/p/w780{scene['file_path']}"
+            # Pick up to 3 scenes
+            num_scenes = min(3, len(backdrops))
+            selected_scenes = random.sample(backdrops, k=num_scenes)
             movie_title = details['title']
 
-            embed = discord.Embed(
-                title=f"🎬 Round {current_round}/{rounds} — Guess the Movie!",
-                description="Type your guess in text within **20 seconds**!"
+            await interaction.channel.send(
+                f"🎬 **Round {current_round}/{rounds} — Guess the Movie!**\n"
+                f"⏱️ You have **20 seconds**! New scenes reveal every 5 seconds..."
             )
-            embed.set_image(url=image_url)
-            await interaction.channel.send(embed=embed)
+
+            # 1. Send Scene 1 immediately
+            scene1_url = f"https://image.tmdb.org/t/p/w780{selected_scenes[0]['file_path']}"
+            embed1 = discord.Embed(title="📸 Scene 1/3", color=discord.Color.blue())
+            embed1.set_image(url=scene1_url)
+            await interaction.channel.send(embed=embed1)
 
             def check(msg):
                 if msg.channel != interaction.channel or msg.author.bot:
                     return False
                 return is_similar_enough(msg.content, movie_title)
 
-            try:
-                winner = await self.bot.wait_for('message', timeout=20.0, check=check)
+            # Create async task to listen for guesses continuously
+            guess_task = asyncio.create_task(self.bot.wait_for('message', check=check))
+
+            winner = None
+            
+            # --- Timeline Breakdown (20 seconds total) ---
+            # Segment 1: Wait 5 seconds (0s -> 5s)
+            done, _ = await asyncio.wait([guess_task], timeout=5.0)
+            if done:
+                winner = guess_task.result()
+
+            # Segment 2: Send Scene 2 & Wait 5 seconds (5s -> 10s)
+            if not winner and len(selected_scenes) > 1:
+                scene2_url = f"https://image.tmdb.org/t/p/w780{selected_scenes[1]['file_path']}"
+                embed2 = discord.Embed(title="📸 Scene 2/3 (Clue Revealed!)", color=discord.Color.gold())
+                embed2.set_image(url=scene2_url)
+                await interaction.channel.send(embed=embed2)
+
+                done, _ = await asyncio.wait([guess_task], timeout=5.0)
+                if done:
+                    winner = guess_task.result()
+
+            # Segment 3: Send Scene 3 & Wait remaining 10 seconds (10s -> 20s)
+            if not winner and len(selected_scenes) > 2:
+                scene3_url = f"https://image.tmdb.org/t/p/w780{selected_scenes[2]['file_path']}"
+                embed3 = discord.Embed(title="📸 Scene 3/3 (Final Clue!)", color=discord.Color.orange())
+                embed3.set_image(url=scene3_url)
+                await interaction.channel.send(embed=embed3)
+
+                done, _ = await asyncio.wait([guess_task], timeout=10.0)
+                if done:
+                    winner = guess_task.result()
+
+            # If still waiting after final segment without a match, cancel listener task
+            if not winner and not guess_task.done():
+                guess_task.cancel()
+
+            # Score processing
+            if winner:
                 scores[winner.author] = scores.get(winner.author, 0) + 1
                 await interaction.channel.send(
                     f"🎉 **Correct {winner.author.mention}!** The movie is **{movie_title}**!\n"
                 )
-            except asyncio.TimeoutError:
+            else:
                 await interaction.channel.send(f"⏰ **Time's up!** The movie was **{movie_title}**.")
 
             if current_round < rounds:

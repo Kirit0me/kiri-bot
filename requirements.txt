@@ -4,3 +4,7 @@ aiohttp
 yt-dlp
 rapidfuzz
 PyNaCl
+discord.py[voice]
+pymongo 
+kafka-python 
+pyspark

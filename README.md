@@ -30,3 +30,18 @@ Fuzzy Answer Matching: Uses rapidfuzz string-matching so minor spelling typos do
 💬 Interactive Triggers & Help SystemMention @Kiri-bot or type kiri for custom responses.
 
 Dedicated /help slash command and kirihelp prefix support.Owner-only !sync command for instant slash command registration.
+
+for kafka
+
+docker run -d --name zookeeper -p 2181:2181 zookeeper
+docker run -d --name kafka -p 9092:9092 \
+  -e KAFKA_ZOOKEEPER_CONNECT=localhost:2181 \
+  -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 \
+  -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+  confluentinc/cp-kafka:latest
+
+source venv/bin/activate
+python pipeline.py
+
+source venv/bin/activate
+python bot.py

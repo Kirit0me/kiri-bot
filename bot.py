@@ -19,6 +19,7 @@ logger = logging.getLogger("KiriBot")
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.voice_states = True
 
 # Disable built-in help command so we can define our own custom help command
 bot = commands.Bot(command_prefix=["kiri"], intents=intents, help_command=None)
