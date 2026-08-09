@@ -6,12 +6,11 @@ from discord import app_commands
 from discord.ext import commands
 from rapidfuzz import fuzz
 import movie_api
+import database
 
 
 def normalize_text(text: str) -> str:
-    """Removes spaces, punctuation, symbols, and converts to lowercase.
-    Example: 'Spider-Man: No Way Home' -> 'spiderman'
-    """
+    """Removes spaces, punctuation, symbols, and converts to lowercase."""
     return re.sub(r'[^a-zA-Z0-9]', '', text).lower()
 
 
@@ -23,23 +22,18 @@ def is_similar_enough(guess: str, actual: str, threshold: float = 75.0) -> bool:
     if not norm_guess:
         return False
 
-    # 1. Exact normalized match (e.g. "spiderman" == "spiderman")
     if norm_guess == norm_actual:
         return True
 
-    # 2. Check main title prefix before subtitle/colon/hyphen
     main_title = actual.split(':')[0].split('-')[0].strip()
     norm_main = normalize_text(main_title)
     if norm_guess == norm_main or norm_main in norm_guess or norm_guess in norm_main:
         return True
 
-    # 3. Substring check on normalized full string
     if norm_guess in norm_actual or norm_actual in norm_guess:
         return True
 
-    # 4. Fuzzy similarity check for typos
-    score = fuzz.token_sort_ratio(guess.lower(), actual.lower())
-    return score >= threshold
+    return fuzz.token_sort_ratio(guess.lower(), actual.lower()) >= threshold
 
 
 class MovieQuizCog(commands.GroupCog, name="movie"):
@@ -47,17 +41,12 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
         self.bot = bot
         super().__init__()
 
-    # -------------------------------------------------------------
     # 1. /movie scene
-    # -------------------------------------------------------------
-    # -------------------------------------------------------------
-    # 1. /movie scene (Progressive 5s Clues during 20s Window)
-    # -------------------------------------------------------------
     @app_commands.command(name="scene", description="Guess movies from 3 scene pictures revealed every 5 seconds!")
     @app_commands.choices(difficulty=[
-        app_commands.Choice(name="Easy (Blockbusters)", value="easy"),
-        app_commands.Choice(name="Medium (Popular)", value="medium"),
-        app_commands.Choice(name="Hard (Indie & Deep Catalog)", value="hard")
+        app_commands.Choice(name="Easy (1 pt)", value="easy"),
+        app_commands.Choice(name="Medium (2 pts)", value="medium"),
+        app_commands.Choice(name="Hard (3 pts)", value="hard")
     ])
     @app_commands.describe(rounds="Number of rounds to play (1-10)", difficulty="Difficulty level")
     async def guess_scene(
@@ -85,7 +74,6 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
             if not backdrops:
                 continue
 
-            # Pick up to 3 scenes
             num_scenes = min(3, len(backdrops))
             selected_scenes = random.sample(backdrops, k=num_scenes)
             movie_title = details['title']
@@ -95,7 +83,6 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
                 f"⏱️ You have **20 seconds**! New scenes reveal every 5 seconds..."
             )
 
-            # 1. Send Scene 1 immediately
             scene1_url = f"https://image.tmdb.org/t/p/w780{selected_scenes[0]['file_path']}"
             embed1 = discord.Embed(title="📸 Scene 1/3", color=discord.Color.blue())
             embed1.set_image(url=scene1_url)
@@ -106,18 +93,15 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
                     return False
                 return is_similar_enough(msg.content, movie_title)
 
-            # Create async task to listen for guesses continuously
             guess_task = asyncio.create_task(self.bot.wait_for('message', check=check))
-
             winner = None
             
-            # --- Timeline Breakdown (20 seconds total) ---
-            # Segment 1: Wait 5 seconds (0s -> 5s)
+            # Segment 1: Wait 5s
             done, _ = await asyncio.wait([guess_task], timeout=5.0)
             if done:
                 winner = guess_task.result()
 
-            # Segment 2: Send Scene 2 & Wait 5 seconds (5s -> 10s)
+            # Segment 2: Send Scene 2 & Wait 5s
             if not winner and len(selected_scenes) > 1:
                 scene2_url = f"https://image.tmdb.org/t/p/w780{selected_scenes[1]['file_path']}"
                 embed2 = discord.Embed(title="📸 Scene 2/3 (Clue Revealed!)", color=discord.Color.gold())
@@ -128,7 +112,7 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
                 if done:
                     winner = guess_task.result()
 
-            # Segment 3: Send Scene 3 & Wait remaining 10 seconds (10s -> 20s)
+            # Segment 3: Send Scene 3 & Wait 10s
             if not winner and len(selected_scenes) > 2:
                 scene3_url = f"https://image.tmdb.org/t/p/w780{selected_scenes[2]['file_path']}"
                 embed3 = discord.Embed(title="📸 Scene 3/3 (Final Clue!)", color=discord.Color.orange())
@@ -139,15 +123,19 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
                 if done:
                     winner = guess_task.result()
 
-            # If still waiting after final segment without a match, cancel listener task
             if not winner and not guess_task.done():
                 guess_task.cancel()
 
-            # Score processing
             if winner:
-                scores[winner.author] = scores.get(winner.author, 0) + 1
+                earned = database.add_quiz_score(
+                    guild_id=str(interaction.guild_id),
+                    user_id=str(winner.author.id),
+                    username=winner.author.display_name,
+                    difficulty=diff_value
+                )
+                scores[winner.author] = scores.get(winner.author, 0) + earned
                 await interaction.channel.send(
-                    f"🎉 **Correct {winner.author.mention}!** The movie is **{movie_title}**!\n"
+                    f"🎉 **Correct {winner.author.mention}!** The movie is **{movie_title}**! *(+{earned} pts)*\n"
                 )
             else:
                 await interaction.channel.send(f"⏰ **Time's up!** The movie was **{movie_title}**.")
@@ -155,7 +143,6 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
             if current_round < rounds:
                 await asyncio.sleep(3)
 
-        # Final Scoreboard Summary
         summary = "🏆 **Final Scoreboard:**\n"
         if not scores:
             summary += "No points scored this game!"
@@ -166,14 +153,12 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
 
         await interaction.channel.send(summary)
 
-    # -------------------------------------------------------------
     # 2. /movie actor
-    # -------------------------------------------------------------
     @app_commands.command(name="actor", description="Guess actors from character roles across multiple rounds!")
     @app_commands.choices(difficulty=[
-        app_commands.Choice(name="Easy (Blockbusters)", value="easy"),
-        app_commands.Choice(name="Medium (Popular)", value="medium"),
-        app_commands.Choice(name="Hard (Indie & Deep Catalog)", value="hard")
+        app_commands.Choice(name="Easy (1 pt)", value="easy"),
+        app_commands.Choice(name="Medium (2 pts)", value="medium"),
+        app_commands.Choice(name="Hard (3 pts)", value="hard")
     ])
     @app_commands.describe(rounds="Number of rounds to play (1-10)", difficulty="Difficulty level")
     async def guess_actor(
@@ -218,8 +203,14 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
 
             try:
                 winner = await self.bot.wait_for('message', timeout=15.0, check=check)
-                scores[winner.author] = scores.get(winner.author, 0) + 1
-                await interaction.channel.send(f"🎉 **Correct {winner.author.mention}!** It was **{actor_name}**!")
+                earned = database.add_quiz_score(
+                    guild_id=str(interaction.guild_id),
+                    user_id=str(winner.author.id),
+                    username=winner.author.display_name,
+                    difficulty=diff_value
+                )
+                scores[winner.author] = scores.get(winner.author, 0) + earned
+                await interaction.channel.send(f"🎉 **Correct {winner.author.mention}!** It was **{actor_name}**! *(+{earned} pts)*")
             except asyncio.TimeoutError:
                 await interaction.channel.send(f"⏰ **Time's up!** The actor was **{actor_name}**.")
 
@@ -236,14 +227,12 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
 
         await interaction.channel.send(summary)
 
-    # -------------------------------------------------------------
     # 3. /movie director
-    # -------------------------------------------------------------
     @app_commands.command(name="director", description="Guess directors of popular movies across multiple rounds!")
     @app_commands.choices(difficulty=[
-        app_commands.Choice(name="Easy (Blockbusters)", value="easy"),
-        app_commands.Choice(name="Medium (Popular)", value="medium"),
-        app_commands.Choice(name="Hard (Indie & Deep Catalog)", value="hard")
+        app_commands.Choice(name="Easy (1 pt)", value="easy"),
+        app_commands.Choice(name="Medium (2 pts)", value="medium"),
+        app_commands.Choice(name="Hard (3 pts)", value="hard")
     ])
     @app_commands.describe(rounds="Number of rounds to play (1-10)", difficulty="Difficulty level")
     async def guess_director(
@@ -289,8 +278,14 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
 
             try:
                 winner = await self.bot.wait_for('message', timeout=15.0, check=check)
-                scores[winner.author] = scores.get(winner.author, 0) + 1
-                await interaction.channel.send(f"🎉 **Correct {winner.author.mention}!** Directed by **{director_name}**!")
+                earned = database.add_quiz_score(
+                    guild_id=str(interaction.guild_id),
+                    user_id=str(winner.author.id),
+                    username=winner.author.display_name,
+                    difficulty=diff_value
+                )
+                scores[winner.author] = scores.get(winner.author, 0) + earned
+                await interaction.channel.send(f"🎉 **Correct {winner.author.mention}!** Directed by **{director_name}**! *(+{earned} pts)*")
             except asyncio.TimeoutError:
                 await interaction.channel.send(f"⏰ **Time's up!** The director was **{director_name}**.")
 
@@ -307,14 +302,12 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
 
         await interaction.channel.send(summary)
 
-    # -------------------------------------------------------------
     # 4. /movie music
-    # -------------------------------------------------------------
     @app_commands.command(name="music", description="Guess movies from soundtrack audio playing in VC!")
     @app_commands.choices(difficulty=[
-        app_commands.Choice(name="Easy (Blockbusters)", value="easy"),
-        app_commands.Choice(name="Medium (Popular)", value="medium"),
-        app_commands.Choice(name="Hard (Indie & Deep Catalog)", value="hard")
+        app_commands.Choice(name="Easy (1 pt)", value="easy"),
+        app_commands.Choice(name="Medium (2 pts)", value="medium"),
+        app_commands.Choice(name="Hard (3 pts)", value="hard")
     ])
     @app_commands.describe(rounds="Number of rounds to play (1-10)", difficulty="Difficulty level")
     async def guess_music(
@@ -323,7 +316,6 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
         rounds: app_commands.Range[int, 1, 10] = 3, 
         difficulty: app_commands.Choice[str] = None
     ):
-        # Must be in a voice channel
         if not interaction.user.voice or not interaction.user.voice.channel:
             await interaction.response.send_message("❌ You must join a Voice Channel first!", ephemeral=True)
             return
@@ -361,8 +353,14 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
                 try:
                     winner = await self.bot.wait_for('message', timeout=20.0, check=check)
                     vc.stop()
-                    scores[winner.author] = scores.get(winner.author, 0) + 1
-                    await interaction.channel.send(f"🎉 **Correct {winner.author.mention}!** The movie is **{movie_title}**!")
+                    earned = database.add_quiz_score(
+                        guild_id=str(interaction.guild_id),
+                        user_id=str(winner.author.id),
+                        username=winner.author.display_name,
+                        difficulty=diff_value
+                    )
+                    scores[winner.author] = scores.get(winner.author, 0) + earned
+                    await interaction.channel.send(f"🎉 **Correct {winner.author.mention}!** The movie is **{movie_title}**! *(+{earned} pts)*")
                 except asyncio.TimeoutError:
                     vc.stop()
                     await interaction.channel.send(f"⏰ **Time's up!** The movie was **{movie_title}**.")
@@ -371,7 +369,6 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
                     await asyncio.sleep(3)
 
         finally:
-            # Always disconnect VC when rounds finish
             await vc.disconnect()
 
         summary = "🏆 **Final Scoreboard:**\n"
@@ -383,6 +380,27 @@ class MovieQuizCog(commands.GroupCog, name="movie"):
                 summary += f"{rank}. {player.mention} — **{score} pt(s)**\n"
 
         await interaction.channel.send(summary)
+
+    # 5. /movie leaderboard
+    @app_commands.command(name="leaderboard", description="View the server quiz leaderboard!")
+    async def quiz_leaderboard(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        scores = database.get_quiz_leaderboard(str(interaction.guild_id), limit=10)
+
+        if not scores:
+            await interaction.followup.send("🏆 No quiz scores recorded yet! Play `/movie` or `/geo` games to earn points.")
+            return
+
+        desc = ""
+        for idx, user in enumerate(scores, 1):
+            desc += f"**{idx}.** `{user['username']}` — **{user['points']:,}** pts *(Correct: {user['correct_answers']:,})*\n"
+
+        embed = discord.Embed(
+            title=f"🏆 Cinema & Quiz Leaderboard — {interaction.guild.name}",
+            description=desc,
+            color=discord.Color.gold()
+        )
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot):

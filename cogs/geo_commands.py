@@ -6,6 +6,7 @@ from discord import app_commands
 from discord.ext import commands
 from rapidfuzz import fuzz
 import geo_api
+import database
 
 
 def normalize_text(text: str) -> str:
@@ -41,7 +42,9 @@ class GeoQuizCog(commands.GroupCog, name="geo"):
     @app_commands.command(name="flag", description="Guess the country from its flag picture!")
     @app_commands.describe(rounds="Number of rounds (1-10)")
     async def guess_flag(
-        self, interaction: discord.Interaction, rounds: app_commands.Range[int, 1, 10] = 3
+        self, 
+        interaction: discord.Interaction, 
+        rounds: app_commands.Range[int, 1, 10] = 3
     ):
         await interaction.response.defer()
         if not self.countries:
@@ -49,7 +52,8 @@ class GeoQuizCog(commands.GroupCog, name="geo"):
 
         scores = {}
         await interaction.followup.send(
-            f"🌍 **Starting Flag Quiz!** ({rounds} Rounds)\n*Round 1 starts in 3 seconds...*"
+            f"🌍 **Starting Flag Quiz!** ({rounds} Rounds)\n"
+            f"*Round 1 starts in 3 seconds...*"
         )
         await asyncio.sleep(3)
 
@@ -60,6 +64,7 @@ class GeoQuizCog(commands.GroupCog, name="geo"):
             embed = discord.Embed(
                 title=f"🚩 Round {current_round}/{rounds} — Which country's flag is this?",
                 description="Type your guess in text within **15 seconds**!",
+                color=discord.Color.green()
             )
             embed.set_image(url=country["flag"])
             await interaction.channel.send(embed=embed)
@@ -71,9 +76,15 @@ class GeoQuizCog(commands.GroupCog, name="geo"):
 
             try:
                 winner = await self.bot.wait_for("message", timeout=15.0, check=check)
-                scores[winner.author] = scores.get(winner.author, 0) + 1
+                earned = database.add_quiz_score(
+                    guild_id=str(interaction.guild_id),
+                    user_id=str(winner.author.id),
+                    username=winner.author.display_name,
+                    difficulty="easy"  # Geo defaults to 1 pt
+                )
+                scores[winner.author] = scores.get(winner.author, 0) + earned
                 await interaction.channel.send(
-                    f"🎉 **Correct {winner.author.mention}!** It is **{country_name}**!\n"
+                    f"🎉 **Correct {winner.author.mention}!** It is **{country_name}**! *(+1 pt)*\n"
                 )
             except asyncio.TimeoutError:
                 await interaction.channel.send(
@@ -83,7 +94,6 @@ class GeoQuizCog(commands.GroupCog, name="geo"):
             if current_round < rounds:
                 await asyncio.sleep(2)
 
-        # Final Scoreboard
         summary = "🏆 **Final Scoreboard:**\n"
         if not scores:
             summary += "No points scored this game!"
@@ -95,12 +105,12 @@ class GeoQuizCog(commands.GroupCog, name="geo"):
         await interaction.channel.send(summary)
 
     # 2. /geo capital (Given Capital -> Guess Country)
-    @app_commands.command(
-        name="capital", description="Guess the country given its capital city!"
-    )
+    @app_commands.command(name="capital", description="Guess the country given its capital city!")
     @app_commands.describe(rounds="Number of rounds (1-10)")
     async def guess_country_from_capital(
-        self, interaction: discord.Interaction, rounds: app_commands.Range[int, 1, 10] = 3
+        self, 
+        interaction: discord.Interaction, 
+        rounds: app_commands.Range[int, 1, 10] = 3
     ):
         await interaction.response.defer()
         if not self.countries:
@@ -108,7 +118,8 @@ class GeoQuizCog(commands.GroupCog, name="geo"):
 
         scores = {}
         await interaction.followup.send(
-            f"🏛️ **Guess the Country from its Capital!** ({rounds} Rounds)\n*Round 1 starts in 3 seconds...*"
+            f"🏛️ **Guess the Country from its Capital!** ({rounds} Rounds)\n"
+            f"*Round 1 starts in 3 seconds...*"
         )
         await asyncio.sleep(3)
 
@@ -129,9 +140,15 @@ class GeoQuizCog(commands.GroupCog, name="geo"):
 
             try:
                 winner = await self.bot.wait_for("message", timeout=15.0, check=check)
-                scores[winner.author] = scores.get(winner.author, 0) + 1
+                earned = database.add_quiz_score(
+                    guild_id=str(interaction.guild_id),
+                    user_id=str(winner.author.id),
+                    username=winner.author.display_name,
+                    difficulty="easy"
+                )
+                scores[winner.author] = scores.get(winner.author, 0) + earned
                 await interaction.channel.send(
-                    f"🎉 **Correct {winner.author.mention}!** **{capital_name}** is the capital of **{country_name}**!"
+                    f"🎉 **Correct {winner.author.mention}!** **{capital_name}** is the capital of **{country_name}**! *(+1 pt)*"
                 )
             except asyncio.TimeoutError:
                 await interaction.channel.send(
@@ -152,12 +169,12 @@ class GeoQuizCog(commands.GroupCog, name="geo"):
         await interaction.channel.send(summary)
 
     # 3. /geo country (Given Country -> Guess Capital)
-    @app_commands.command(
-        name="country", description="Guess the capital city of a given country!"
-    )
+    @app_commands.command(name="country", description="Guess the capital city of a given country!")
     @app_commands.describe(rounds="Number of rounds (1-10)")
     async def guess_capital_from_country(
-        self, interaction: discord.Interaction, rounds: app_commands.Range[int, 1, 10] = 3
+        self, 
+        interaction: discord.Interaction, 
+        rounds: app_commands.Range[int, 1, 10] = 3
     ):
         await interaction.response.defer()
         if not self.countries:
@@ -165,7 +182,8 @@ class GeoQuizCog(commands.GroupCog, name="geo"):
 
         scores = {}
         await interaction.followup.send(
-            f"📍 **Guess the Capital City!** ({rounds} Rounds)\n*Round 1 starts in 3 seconds...*"
+            f"📍 **Guess the Capital City!** ({rounds} Rounds)\n"
+            f"*Round 1 starts in 3 seconds...*"
         )
         await asyncio.sleep(3)
 
@@ -186,9 +204,15 @@ class GeoQuizCog(commands.GroupCog, name="geo"):
 
             try:
                 winner = await self.bot.wait_for("message", timeout=15.0, check=check)
-                scores[winner.author] = scores.get(winner.author, 0) + 1
+                earned = database.add_quiz_score(
+                    guild_id=str(interaction.guild_id),
+                    user_id=str(winner.author.id),
+                    username=winner.author.display_name,
+                    difficulty="easy"
+                )
+                scores[winner.author] = scores.get(winner.author, 0) + earned
                 await interaction.channel.send(
-                    f"🎉 **Correct {winner.author.mention}!** The capital of **{country_name}** is **{capital_name}**!"
+                    f"🎉 **Correct {winner.author.mention}!** The capital of **{country_name}** is **{capital_name}**! *(+1 pt)*"
                 )
             except asyncio.TimeoutError:
                 await interaction.channel.send(
@@ -208,28 +232,26 @@ class GeoQuizCog(commands.GroupCog, name="geo"):
                 summary += f"{rank}. {player.mention} — **{score} pt(s)**\n"
         await interaction.channel.send(summary)
 
-    @app_commands.command(name="list", description="Inspect all currently loaded countries in memory.")
-    async def list_loaded_countries(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        
-        total_count = len(self.countries)
-        if total_count == 0:
-            await interaction.followup.send("❌ No countries currently loaded in memory!")
+    # 4. /geo leaderboard
+    @app_commands.command(name="leaderboard", description="View the server quiz leaderboard!")
+    async def quiz_leaderboard(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        scores = database.get_quiz_leaderboard(str(interaction.guild_id), limit=10)
+
+        if not scores:
+            await interaction.followup.send("🏆 No quiz scores recorded yet! Play `/geo` or `/movie` games to earn points.")
             return
 
-        # Format first 30 country names to inspect starting letters
-        sample_names = [c["name"] for c in self.countries[:30]]
-        names_text = ", ".join(sample_names)
-        
-        # Log all country names directly to your console terminal to inspect everything
-        print(f"📋 ALL LOADED COUNTRIES ({total_count}): {[c['name'] for c in self.countries]}")
+        desc = ""
+        for idx, user in enumerate(scores, 1):
+            desc += f"**{idx}.** `{user['username']}` — **{user['points']:,}** pts *(Correct: {user['correct_answers']:,})*\n"
 
         embed = discord.Embed(
-            title="🌍 Loaded Geography Dataset Inspection",
-            description=f"**Total Loaded:** `{total_count}` countries\n\n**First 30 Countries in List:**\n{names_text}...",
-            color=discord.Color.blue()
+            title=f"🏆 Server Quiz Leaderboard — {interaction.guild.name}",
+            description=desc,
+            color=discord.Color.green()
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot):

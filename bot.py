@@ -169,17 +169,34 @@ async def on_interaction(interaction: discord.Interaction):
         logger.info(f"⚡ [Slash Command] /{cmd_name} executed by {user} in [{guild} -> #{channel}]")
 
 
-# -------------------------------------------------------------
-# 5. Manual Sync Command
-# -------------------------------------------------------------
+
 @bot.command(name="sync")
 @commands.is_owner()
-async def sync(ctx):
-    await ctx.send("Syncing slash commands to this server...")
-    bot.tree.copy_global_to(guild=ctx.guild)
-    synced = await bot.tree.sync(guild=ctx.guild)
-    logger.info(f"⚡ Synced {len(synced)} slash commands directly to guild '{ctx.guild.name}'")
-    await ctx.send(f"⚡ Done! Synced **{len(synced)}** slash commands directly to this server.")
+async def sync(ctx, spec: str = None):
+    if spec == "guild" or spec == "this":
+        # 1. Sync globally defined commands instantly to THIS server only
+        bot.tree.copy_global_to(guild=ctx.guild)
+        synced = await bot.tree.sync(guild=ctx.guild)
+        await ctx.send(f"⚡ Synced **{len(synced)}** slash commands directly to **{ctx.guild.name}**!")
+        
+    elif spec == "global":
+        # 2. Register commands across ALL servers (Takes ~1 hour to propagate globally)
+        synced = await bot.tree.sync()
+        await ctx.send(f"🌐 Globals synced! Registered **{len(synced)}** commands across all servers. *(Note: Discord global propagation can take up to 1 hour)*.")
+        
+    elif spec == "clear":
+        # 3. Clear guild-specific overrides (forces the server to use global commands)
+        bot.tree.clear_commands(guild=ctx.guild)
+        await bot.tree.sync(guild=ctx.guild)
+        await ctx.send(f"🧹 Cleared guild-specific command overrides for **{ctx.guild.name}**.")
+        
+    else:
+        await ctx.send(
+            "**Usage:**\n"
+            "`!sync this` — Instantly syncs commands to *this current server* (Best for testing).\n"
+            "`!sync global` — Syncs commands *globally across all servers* (Takes ~1 hour to appear in new servers).\n"
+            "`!sync clear` — Clears server-specific overrides."
+        )
 
 
 async def main():
